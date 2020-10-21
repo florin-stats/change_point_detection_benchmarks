@@ -1,25 +1,35 @@
 # https://stackoverflow.com/questions/8409095/set-markers-for-individual-points-on-a-line-in-matplotlib
 # https://jeremy9959.net/Blog/bayesian-online-changepoint-fixed/
 
+# General libs
 import scipy.stats as ss
 import numpy as np
 import matplotlib.pyplot as plt
 from functools import partial
 from collections import defaultdict
 import random
+import time
+import pandas as pd
+from tabulate import tabulate
 
+
+# Changepoint libs
 import bayesian_changepoint_detection.bayesian_changepoint_detection.online_changepoint_detection as oncd
-from bocd.bocd.bocd import *
-from bocd.bocd.distribution import *
+# from bocd.bocd.bocd import *
+# from bocd.bocd.distribution import *
 from bocd.bocd.hazard import *
 import changefinder
 import ruptures as rpt
 
 
-NUM_POINTS = [25,50,100,500,1000,1250]
-CHANGEPOINT_LOCATIONS = [6,16,25,125,250,1000]
+# NUM_POINTS = [25,50,100,500,1000,1250]
+# CHANGEPOINT_LOCATIONS = [6,16,25,125,250,1000]
+CHANGEPOINT_LOCATIONS = [25, 50, 75, 125, 250, 375,
+                         0, 100, 0, 500] # cases where there are no changepoints
+NUM_POINTS = [100, 100, 100, 500, 500, 500,
+              100, 100, 500, 500] # cases where there are no changepoints
 t1 = 10
-t2 = 1000
+t2 = 100
 lambda1 = 1
 lambda2 = 10
 RANDOM_SEED = 2222
@@ -143,6 +153,46 @@ def generate_truncated_exp(n, c, ts = (t1,t2), lambdas = (lambda1, lambda2)):
     return data
 
 
+def F_exp(x, lambda_):
+    return 1 - np.exp(-lambda_ * x)
+
+
+def F_exp_inverse(x, lambda_):
+    return (-1) * (1 / lambda_) * np.log(1 - x)
+
+
+def generated_truncated_exp_inverse_uniform_sampling(n, c, t1, t2, lambda1, lambda2):
+    """
+    https://stackoverflow.com/questions/40143718/python-scipy-truncated-exponential-distribution
+
+    :param n: length of time series
+    :param c: changepoint location
+    :param t1: parameter of truncated exponential
+    :param t2:
+    :param lambdas: rate para
+    :return:
+    """
+
+    # Generate a uniform random variable U ~ Uniform([F_exp(a),F_exp(b)]
+    u1 = np.random.uniform(F_exp(t1,1/lambda2),F_exp(t2,1/lambda2), size = c)
+    # Now, take F^(-1)(u)
+    X1 = F_exp_inverse(u1,lambda2)
+
+    u2 = np.random.uniform(F_exp(t1, 1/lambda1), F_exp(t2, 1/lambda1), size=n-c)
+    X2 = F_exp_inverse(u2,lambda1)
+
+    series = np.concatenate((X1,X2))
+    data = defaultdict()
+    data['series'] = series
+    data['c'] = c
+    data['n'] = n
+    data['ts'] = [t1,t2]
+    data['lambdas'] = [lambda1, lambda2]
+    data['distribution'] = ss.truncexpon
+    data['detected_changepoints'] = dict()
+    return data
+
+
 def L1TF(signal):
     import numpy as np
     import cvxpy as cp
@@ -204,8 +254,14 @@ if __name__ == "__main__":
 
     data_list = list()
 
+    benchmark_list = list()
+    # and each element of the list contains: "AlgorithmName", "NumPoints", "ChangepointLocation", "ExecutionTime"
+
     for i in range(len(NUM_POINTS)):
-        tmp_data = generate_truncated_exp(NUM_POINTS[i], CHANGEPOINT_LOCATIONS[i])
+        # tmp_data = generate_truncated_exp(NUM_POINTS[i], CHANGEPOINT_LOCATIONS[i])
+        tmp_data = generated_truncated_exp_inverse_uniform_sampling(NUM_POINTS[i],
+                                                                    CHANGEPOINT_LOCATIONS[i],
+                                                                    t1,t2,lambda1,lambda2)
         data_list.append(tmp_data)
 
     plot_multiple_data(data_list)
@@ -295,8 +351,15 @@ if __name__ == "__main__":
         }
 
         for a in RUPTURES_ALGORITHMS.keys():
+            start_time = time.time()
             algo = RUPTURES_ALGORITHMS[a]['function'](**RUPTURES_ALGORITHMS[a]['model_params']).fit(signal)
             my_bkps = algo.predict(**RUPTURES_ALGORITHMS[a]['predict_params'])
+            end_time = time.time() - start_time
+            benchmark_list.append({"AlgorithmName": a,
+                                   "TimeSeriesID": i,
+                                   "NumPoints": NUM_POINTS[i],
+                                   "ChangepointLocation": CHANGEPOINT_LOCATIONS[i],
+                                   "ExecutionTime":end_time})
             print(a)
             print(my_bkps)
             data_list[i]['detected_changepoints'].update({a: my_bkps})
@@ -305,9 +368,11 @@ if __name__ == "__main__":
         # # # # # # BAYESIAN ONLINE CHANGEPOINT DETECTION # # # # # #
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
+        start_time = time.time()
         R, maxes = oncd.online_changepoint_detection(signal,
                                                      hazard_func=partial(oncd.constant_hazard, 500),
                                                      observation_likelihood=oncd.StudentT(0.1, .01, 1, 0))
+        end_time = time.time() - start_time
         Nw = 10
         all_cp_probs = R[Nw, Nw:-1]
         idx_changes = np.where(np.diff(maxes) < 0)[0]
@@ -317,6 +382,11 @@ if __name__ == "__main__":
         top_n_changepoints = list(all_cp_probs.argsort()[-Num_CP:][::-1])
 
         data_list[i]['detected_changepoints'].update({'BayesianOnlineChangePointDetection': top_n_changepoints})
+        benchmark_list.append({"AlgorithmName": "BayesianOnlineChangePointDetection",
+                               "TimeSeriesID": i,
+                               "NumPoints": NUM_POINTS[i],
+                               "ChangepointLocation": CHANGEPOINT_LOCATIONS[i],
+                               "ExecutionTime": end_time})
 
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
         # # # # # # # # # # # # CHANGEFINDER  # # # # # # # # # # # #
@@ -325,6 +395,8 @@ if __name__ == "__main__":
         smooth = int(0.05 * signal.shape[0])
         if smooth <= 3:
             smooth = 3
+
+        start_time = time.time()
         cf = changefinder.ChangeFinder(r=0.01, order=1, smooth=smooth)
 
         ret = []
@@ -332,9 +404,17 @@ if __name__ == "__main__":
             score = cf.update(j)
             ret.append(score)
 
+        end_time = time.time() - start_time
+
         Num_CP = 2
         top_n_changepoints = list(np.array(ret).argsort()[-Num_CP:][::-1])
         data_list[i]['detected_changepoints'].update({'ChangeFinder': top_n_changepoints})
+
+        benchmark_list.append({"AlgorithmName": "ChangeFinder",
+                               "TimeSeriesID": i,
+                               "NumPoints": NUM_POINTS[i],
+                               "ChangepointLocation": CHANGEPOINT_LOCATIONS[i],
+                               "ExecutionTime": end_time})
 
         if PLOT_CHANGEFINDER:
             fig = plt.figure()
@@ -367,6 +447,25 @@ if __name__ == "__main__":
     LIST_OF_ALGORITHMS = ['Pelt', 'DynamicProgramming', 'BinarySegmentation', 'BottomUpSegmentation', 'WindowBased', 'BayesianOnlineChangePointDetection', 'ChangeFinder']
     for algorithm in LIST_OF_ALGORITHMS:
         plot_multiple_data_by_algorithm(data_list, algorithm)
+
+    df_benchmark = pd.DataFrame(benchmark_list)
+    pdtabulate = lambda df: tabulate(df, headers='keys', tablefmt='latex')
+    print(pdtabulate(df_benchmark.loc[:35]))
+    print(pdtabulate(df_benchmark.loc[36:]))
+
+    # AlgorithmName #Paper #Code
+    ref_list = [
+        ['Pelt', "REFERENCE", "CODE"],
+         ['DynamicProgramming', "REFERENCE", "CODE"],
+         ['BinarySegmentation', "REFERENCE", "CODE"],
+         ['BottomUpSegmentation', "REFERENCE", "CODE"],
+         ['WindowBased', "REFERENCE", "CODE"],
+         ['BayesianOnlineChangePointDetection', "REFERENCE", "CODE"],
+         ['ChangeFinder', "REFERENCE", "CODE"]
+    ]
+    ref_df = pd.DataFrame(ref_list,columns=['AlgorithmName','Paper','Code'])
+    print(pdtabulate(ref_df))
+
 
 
 
