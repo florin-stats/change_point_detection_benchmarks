@@ -24,14 +24,16 @@ import ruptures as rpt
 
 # NUM_POINTS = [25,50,100,500,1000,1250]
 # CHANGEPOINT_LOCATIONS = [6,16,25,125,250,1000]
-CHANGEPOINT_LOCATIONS = [25, 50, 75, 125, 250, 375,
-                         0, 100, 0, 500] # cases where there are no changepoints
-NUM_POINTS = [100, 100, 100, 500, 500, 500,
-              100, 100, 500, 500] # cases where there are no changepoints
+CHANGEPOINT_LOCATIONS = [0, 100, 25,   50,  75, #100 num points
+                         0, 500, 125, 250, 375, #500 num points
+                         ]
+# NUM_POINTS = [100, 100, 100, 500, 500, 500,
+#               100, 100, 500, 500] # cases where there are no changepoints
+NUM_POINTS = [100] * 5 + [500] * 5
 t1 = 10
 t2 = 100
 lambda1 = 1
-lambda2 = 10
+lambda2 = 1 / 10
 RANDOM_SEED = 2222
 PLOT_BOCPD = False
 PLOT_CHANGEFINDER = False
@@ -82,21 +84,24 @@ def plot_multiple_data(data_list):
 
 
 def plot_multiple_data_by_algorithm(data_list, changepoint_algorithm):
+    plt.rc('text', usetex=False)
+    plt.rc('font', family='serif')
+    font = {'weight': 'normal', 'size': 12}
 
     fig, axs = plt.subplots(len(data_list))
     fig.set_size_inches(8.25,11.75)
 
+    fig.suptitle("Changepoint Algorithm: {} \n NUM_POINTS = {}".format(changepoint_algorithm, 100), fontsize=15)
+    # plt.xlabel("Changepoint Algorithm: {}".format(changepoint_algorithm))
+
     plt.subplots_adjust(hspace = 1)
-    plt.xlabel("Changepoint Algorithm: {}".format(changepoint_algorithm))
-
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif')
-    font = {'weight' : 'normal', 'size'   : 12}
-
-    # plt.figure(figsize=(4, 7))
 
     for i in range(len(data_list)):
+        # plt.title("NUM_POINTS = {}".format(data_list[i]['n']), fontsize=12)
+
         data = data_list[i]
+
+        fig.suptitle("Changepoint Algorithm: {} \n NUM_POINTS = {}".format(changepoint_algorithm, data['n']), fontsize=15)
 
         x = np.arange(0, data['series'].shape[0])
         y = data['series']
@@ -109,17 +114,21 @@ def plot_multiple_data_by_algorithm(data_list, changepoint_algorithm):
         axs[i].set_title("Real Changepoint at: {} | Detected Changepoints at: {}".
                   format(data['c'], repr(data['detected_changepoints'][changepoint_algorithm])))
 
-        # plt.ylabel("Y axis")
-        axs[i].axvline(x=data['c'], linewidth=1, color='blue')
+        # plt.ylabel("NUM_POINTS = {}".format(data_list[i]['n']))
+
+        if data['c'] not in set(NUM_POINTS).union({0}):
+            axs[i].axvline(x=data['c'], linewidth=1, color='blue')
+            axs[i].set_ylabel("RealCP@{}".format(data['c']))
+        else:
+            axs[i].set_ylabel("NO CP")
         if 'detected_changepoints' in data.keys():
             for j in range(len(data['detected_changepoints'][changepoint_algorithm])):
                 axs[i].axvline(x=data['detected_changepoints'][changepoint_algorithm][j], linewidth=1, color='red')
 
 
-        axs[i].plot(x, y, color="black")
+        axs[i].plot(x, y, color="black", linestyle='',marker='.',markersize=1.5)
 
-
-        plt.savefig('figures/{}.png'.format(changepoint_algorithm),dpi=100)
+        plt.savefig('figures/{}{}.png'.format(changepoint_algorithm,data_list[i]['n']),dpi=100)
         plt.show()
 
 
@@ -174,12 +183,48 @@ def generated_truncated_exp_inverse_uniform_sampling(n, c, t1, t2, lambda1, lamb
     """
 
     # Generate a uniform random variable U ~ Uniform([F_exp(a),F_exp(b)]
-    u1 = np.random.uniform(F_exp(t1,1/lambda2),F_exp(t2,1/lambda2), size = c)
+    u1 = np.random.uniform(F_exp(t1,lambda1),F_exp(t2,lambda1), size = c)
     # Now, take F^(-1)(u)
-    X1 = F_exp_inverse(u1,lambda2)
+    X1 = F_exp_inverse(u1,lambda1)
 
-    u2 = np.random.uniform(F_exp(t1, 1/lambda1), F_exp(t2, 1/lambda1), size=n-c)
-    X2 = F_exp_inverse(u2,lambda1)
+    u2 = np.random.uniform(F_exp(t1, lambda2), F_exp(t2, lambda2), size=n-c)
+    X2 = F_exp_inverse(u2,lambda2)
+
+    series = np.concatenate((X1,X2))
+    data = defaultdict()
+    data['series'] = series
+    data['c'] = c
+    data['n'] = n
+    data['ts'] = [t1,t2]
+    data['lambdas'] = [lambda1, lambda2]
+    data['distribution'] = ss.truncexpon
+    data['detected_changepoints'] = dict()
+    return data
+
+
+def generated_truncated_exp_v2(n, c, t1, t2, lambda1, lambda2):
+    """
+    https://stackoverflow.com/questions/40143718/python-scipy-truncated-exponential-distribution
+
+    :param n: length of time series
+    :param c: changepoint location
+    :param t1: parameter of truncated exponential
+    :param t2:
+    :param lambdas: rate para
+    :return:
+    """
+
+    U1 = np.random.uniform(0,1, size = c)
+    a_ = np.exp((-1) * lambda1 * t1)
+    b_ = np.exp((-1) * lambda1 * t2)
+    c_ = a_ - b_
+    X1 = (-1) * (1/lambda1) * np.log(a_ - (c_ * U1))
+
+    U2 = np.random.uniform(0, 1, size=n-c)
+    a_ = np.exp((-1) * lambda2 * t1)
+    b_ = np.exp((-1) * lambda2 * t2)
+    c_ = a_ - b_
+    X2 = (-1) * (1 / lambda2) * np.log(a_ - (c_ * U2))
 
     series = np.concatenate((X1,X2))
     data = defaultdict()
@@ -259,9 +304,11 @@ if __name__ == "__main__":
 
     for i in range(len(NUM_POINTS)):
         # tmp_data = generate_truncated_exp(NUM_POINTS[i], CHANGEPOINT_LOCATIONS[i])
-        tmp_data = generated_truncated_exp_inverse_uniform_sampling(NUM_POINTS[i],
-                                                                    CHANGEPOINT_LOCATIONS[i],
-                                                                    t1,t2,lambda1,lambda2)
+        # tmp_data = generated_truncated_exp_inverse_uniform_sampling(NUM_POINTS[i],
+        #                                                             CHANGEPOINT_LOCATIONS[i],
+        #                                                             t1,t2,lambda1,lambda2)
+        tmp_data = generated_truncated_exp_v2(NUM_POINTS[i], CHANGEPOINT_LOCATIONS[i],
+                                                t1,t2,lambda1,lambda2)
         data_list.append(tmp_data)
 
     plot_multiple_data(data_list)
@@ -359,6 +406,7 @@ if __name__ == "__main__":
                                    "TimeSeriesID": i,
                                    "NumPoints": NUM_POINTS[i],
                                    "ChangepointLocation": CHANGEPOINT_LOCATIONS[i],
+                                   "DetectedChangepointAt": my_bkps,
                                    "ExecutionTime":end_time})
             print(a)
             print(my_bkps)
@@ -386,6 +434,7 @@ if __name__ == "__main__":
                                "TimeSeriesID": i,
                                "NumPoints": NUM_POINTS[i],
                                "ChangepointLocation": CHANGEPOINT_LOCATIONS[i],
+                               "DetectedChangepointAt": top_n_changepoints,
                                "ExecutionTime": end_time})
 
         # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -406,7 +455,7 @@ if __name__ == "__main__":
 
         end_time = time.time() - start_time
 
-        Num_CP = 2
+        Num_CP = 1
         top_n_changepoints = list(np.array(ret).argsort()[-Num_CP:][::-1])
         data_list[i]['detected_changepoints'].update({'ChangeFinder': top_n_changepoints})
 
@@ -414,6 +463,7 @@ if __name__ == "__main__":
                                "TimeSeriesID": i,
                                "NumPoints": NUM_POINTS[i],
                                "ChangepointLocation": CHANGEPOINT_LOCATIONS[i],
+                               "DetectedChangepointAt": top_n_changepoints,
                                "ExecutionTime": end_time})
 
         if PLOT_CHANGEFINDER:
@@ -446,12 +496,14 @@ if __name__ == "__main__":
     # plot multiple by algorithm
     LIST_OF_ALGORITHMS = ['Pelt', 'DynamicProgramming', 'BinarySegmentation', 'BottomUpSegmentation', 'WindowBased', 'BayesianOnlineChangePointDetection', 'ChangeFinder']
     for algorithm in LIST_OF_ALGORITHMS:
-        plot_multiple_data_by_algorithm(data_list, algorithm)
+        plot_multiple_data_by_algorithm(data_list[:5], algorithm)
+        plot_multiple_data_by_algorithm(data_list[5:], algorithm)
 
     df_benchmark = pd.DataFrame(benchmark_list)
+    df_benchmark['ExecutionTime'] = df_benchmark['ExecutionTime'].round(4)
     pdtabulate = lambda df: tabulate(df, headers='keys', tablefmt='latex')
     print(pdtabulate(df_benchmark.loc[:35]))
-    print(pdtabulate(df_benchmark.loc[36:]))
+    print(pdtabulate(df_benchmark.loc[35:]))
 
     # AlgorithmName #Paper #Code
     ref_list = [
