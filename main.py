@@ -1,5 +1,8 @@
 # https://stackoverflow.com/questions/8409095/set-markers-for-individual-points-on-a-line-in-matplotlib
 # https://jeremy9959.net/Blog/bayesian-online-changepoint-fixed/
+# https://stackoverflow.com/questions/33382619/plot-a-horizontal-line-using-matplotlib/50444098
+# https://matplotlib.org/3.3.2/api/_as_gen/matplotlib.pyplot.axis.html
+
 
 # General libs
 import scipy.stats as ss
@@ -67,7 +70,11 @@ def plot_multiple_data(data_list):
         axs[i].set_title("n={}; CPL: {}; lambdas={}; ts={}".
                   format(data['n'], data['c'], repr(data['lambdas']), repr(data['ts'])))
         # plt.ylabel("Y axis")
+        axs[i].set(ylim=(0, 100))
         axs[i].axvline(x=data['c'], linewidth=1, color='blue')
+        axs[i].hlines(y=11, xmin=0, xmax=data['c'], linewidth=2, color='g')
+        axs[i].hlines(y=20, xmin=data['c'], xmax=data['n'], linewidth=2, color='g')
+
         if 'detected_changepoints' in data.keys():
             for changepoint_model in data['detected_changepoints']:
                 # for j in range(len(data['detected_changepoints'][changepoint_model])):
@@ -113,6 +120,8 @@ def plot_multiple_data_by_algorithm(data_list, changepoint_algorithm):
 
         axs[i].set_title("Real Changepoint at: {} | Detected Changepoints at: {}".
                   format(data['c'], repr(data['detected_changepoints'][changepoint_algorithm])))
+        axs[i].hlines(y=11, xmin=0, xmax=data['c'], linewidth=1.5, color='g')
+        axs[i].hlines(y=20, xmin=data['c'], xmax=data['n'], linewidth=1.5, color='g')
 
         # plt.ylabel("NUM_POINTS = {}".format(data_list[i]['n']))
 
